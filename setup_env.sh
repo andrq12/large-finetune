@@ -53,6 +53,9 @@ echo "✅  locked environment written to requirements.lock"
 # ---------------------------------------------------------------------------
 echo
 echo "👉  Run HF login (press Enter to skip)…"
+
+uv pip install -U transformers trl fire tensorboard
+
 huggingface-cli login || true
 
 
