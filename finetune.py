@@ -1,16 +1,16 @@
+# pyright: ignore-all
 import os
 import json
 import torch
 from typing import Literal
 import fire
 from datasets import load_from_disk, Dataset, load_dataset, DatasetDict
-from transformers import (
-    AutoModelForCausalLM,
-    AutoTokenizer,
-    Trainer,
-    TrainingArguments,
-    DataCollatorForLanguageModeling,
-)
+# fmt: off
+from transformers import AutoModelForCausalLM, AutoTokenizer  # type: ignore
+from transformers.trainer import Trainer  # type: ignore
+from transformers.training_args import TrainingArguments  # type: ignore
+from transformers.data.data_collator import DataCollatorForLanguageModeling  # type: ignore
+# fmt: on
 from peft import LoraConfig, get_peft_model
 from dotenv import load_dotenv
 from pathlib import Path
@@ -57,7 +57,12 @@ def extract_content_from_tags(text: str) -> str:
         return text.strip()
 
 
-def load_and_mix_nemotron_dataset(original_docs: list[str], nemotron_ratio: float = 0.05, max_nemotron_samples: int = 50000) -> list[str]:
+def load_and_mix_nemotron_dataset(
+    original_docs: list[str],
+    nemotron_ratio: float = 0.05,
+    max_nemotron_samples: int = 50000,
+    nemotron_splits: list[str] | None = None,
+) -> list[str]:
     """
     Load Nemotron dataset and mix it with original data.
     
@@ -94,6 +99,8 @@ def load_and_mix_nemotron_dataset(original_docs: list[str], nemotron_ratio: floa
         samples_loaded = 0
         # Try to handle as DatasetDict first
         for split_name, split_data in nemotron_dataset_dict.items():  # type: ignore
+            if nemotron_splits and split_name not in nemotron_splits:
+                continue  # Skip unwanted splits
             print(f"Loading samples from {split_name} split")
             
             for item in split_data:
@@ -140,6 +147,8 @@ def load_and_mix_nemotron_dataset(original_docs: list[str], nemotron_ratio: floa
         samples_loaded = 0
         try:
             for split_name, split_data in nemotron_dataset_dict.items():  # type: ignore
+                if nemotron_splits and split_name not in nemotron_splits:
+                    continue
                 print(f"Loading samples from {split_name} split")
                 
                 # Take a subset of the split
@@ -300,12 +309,13 @@ def load_and_tokenize_dataset(
     mix_nemotron: bool = True,
     nemotron_ratio: float = 0.05,
     max_nemotron_samples: int = 50000,
+    nemotron_splits: list[str] | None = None,
 ):
     """Load and tokenize the dataset."""
     if dataset_path.endswith(".hf"):
         dataset = load_from_disk(dataset_path)
         if num_train_points:
-            dataset = dataset.select(range(num_train_points))
+            dataset = dataset.select(range(num_train_points))  # type: ignore[attr-defined]
     elif dataset_path.endswith(".jsonl"):
         dataset = load_jsonl(dataset_path)
         if "text" in dataset[0]:
@@ -322,7 +332,12 @@ def load_and_tokenize_dataset(
         
         # Mix in Nemotron dataset if requested
         if mix_nemotron:
-            mixed_docs = load_and_mix_nemotron_dataset(docs, nemotron_ratio=nemotron_ratio, max_nemotron_samples=max_nemotron_samples)
+            mixed_docs = load_and_mix_nemotron_dataset(
+                docs,
+                nemotron_ratio=nemotron_ratio,
+                max_nemotron_samples=max_nemotron_samples,
+                nemotron_splits=nemotron_splits,
+            )
             
             # Process mixed data to ensure all are strings
             processed_docs = []
@@ -344,7 +359,7 @@ def load_and_tokenize_dataset(
         print(f"First document preview: {docs[0][:200]}...")
         dataset = Dataset.from_dict({"text": docs})
         if num_train_points:
-            dataset = dataset.select(range(num_train_points))
+            dataset = dataset.select(range(num_train_points))  # type: ignore[attr-defined]
         dataset = dataset.train_test_split(test_size=0.1, seed=42)
     else:
         raise ValueError(f"Unsupported dataset format: {dataset_path}")
@@ -402,6 +417,8 @@ def train_model(
     mix_nemotron: bool = True,
     nemotron_ratio: float = 0.05,
     max_nemotron_samples: int = 50000,
+    nemotron_splits: list[str] | None = None,
+    push_to_hub_repo: str | None = None,
 ):
     """Main training function.
 
@@ -413,6 +430,8 @@ def train_model(
         mix_nemotron: Whether to mix in Nemotron dataset
         nemotron_ratio: Proportion of Nemotron data in final dataset (default: 0.05 = 5%)
         max_nemotron_samples: Maximum number of Nemotron samples to load (default: 50000)
+        nemotron_splits: List of split names (e.g. ["train", "validation"]) to sample Nemotron data from. If None, use all splits.
+        push_to_hub_repo: Optional Hugging Face repo id ("username/repo_name") to upload the LoRA adapter after training.
     """
 
     # Setup model and tokenizer
@@ -431,7 +450,10 @@ def train_model(
     # Load and tokenize dataset
     tokenized_dataset = load_and_tokenize_dataset(
         dataset_path, tokenizer, max_length=max_length, num_train_points=num_train_points,
-        mix_nemotron=mix_nemotron, nemotron_ratio=nemotron_ratio, max_nemotron_samples=max_nemotron_samples
+        mix_nemotron=mix_nemotron,
+        nemotron_ratio=nemotron_ratio,
+        max_nemotron_samples=max_nemotron_samples,
+        nemotron_splits=nemotron_splits,
     )
 
     # Setup data collator
@@ -484,11 +506,11 @@ def train_model(
     else:
         train_dataset = tokenized_dataset
     
-    trainer = Trainer(
+    trainer = Trainer(  # type: ignore
         model=model,
         args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
+        train_dataset=train_dataset,  # type: ignore[arg-type]
+        eval_dataset=eval_dataset,  # type: ignore[arg-type]
         data_collator=data_collator,
     )
 
@@ -497,6 +519,22 @@ def train_model(
     os.makedirs(f"{output_dir}/finetuned_model", exist_ok=True)
     model.save_pretrained(f"{output_dir}/finetuned_model")
     tokenizer.save_pretrained(f"{output_dir}/finetuned_model")
+
+    # ------------------------------------------------------------------
+    # Optional: push LoRA adapter to Hugging Face Hub
+    # ------------------------------------------------------------------
+    if push_to_hub_repo and use_lora:
+        try:
+            print(f"📤 Pushing LoRA adapter to Hugging Face Hub repo '{push_to_hub_repo}'…")
+            # PeftModel's push_to_hub uploads only the adapter weights/config by default.
+            model.push_to_hub(
+                push_to_hub_repo,
+                commit_message="Upload LoRA adapter after fine-tuning",
+                private=True,  # ensure repository stays private
+            )  # type: ignore[attr-defined]
+            print("✅ Adapter uploaded successfully.")
+        except Exception as hub_exc:
+            print(f"⚠️  Failed to push adapter to hub: {hub_exc}")
     with open(f"{output_dir}/train_config.json", "w") as f:
         training_args_dict = training_args.to_dict()
         training_args_dict["lora_r"] = lora_r
@@ -514,6 +552,8 @@ def train_model(
         training_args_dict["mix_nemotron"] = mix_nemotron
         training_args_dict["nemotron_ratio"] = nemotron_ratio
         training_args_dict["max_nemotron_samples"] = max_nemotron_samples
+        training_args_dict["nemotron_splits"] = nemotron_splits
+        training_args_dict["push_to_hub_repo"] = push_to_hub_repo
         json.dump(training_args_dict, f, indent=4)
 
 
@@ -535,3 +575,16 @@ if __name__ == "__main__":
 # torchrun --nproc_per_node=2 finetune.py train_model --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" --dataset_path "/workspace/large-finetune/synth_docs.jsonl" --output_dir "/workspace/runs/" --num_train_epochs 1 --per_device_train_batch_size 4 --per_device_eval_batch_size 16 --gradient_accumulation_steps 4 --warmup_steps 0 --lr 1e-5 --use_lora True --eval_steps 500 --save_steps 500 --save_total_limit 5 --use_ddp True
 
 #torchrun --nproc_per_node=2 finetune.py train_model --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" --dataset_path "/workspace/large-finetune/synth_docs.jsonl" --output_dir "/workspace/runs/" --num_train_epochs 1 --per_device_train_batch_size 8 --per_device_eval_batch_size 16 --gradient_accumulation_steps 2 --warmup_steps 0 --lr 1e-5 --use_lora True --eval_steps 250 --save_steps 250 --save_total_limit 5 --use_ddp True
+
+# -----------------------------------------------------------------------------
+# Example CLI usage demonstrating new flags
+# -----------------------------------------------------------------------------
+# python finetune.py train_model \
+#   --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" \
+#   --dataset_path "/workspace/large-finetune/synth_docs.jsonl" \
+#   --output_dir "/workspace/runs/lora_ft_run" \
+#   --use_lora True \
+#   --nemotron_ratio 0.05 \
+#   --nemotron_splits '["train","validation"]' \
+#   --max_nemotron_samples 50000 \
+#   --push_to_hub_repo "your_username/my-private-lora-adapter"
