@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #set -euo pipefail
 # ------------------------------------------------ CONFIG --------------------
-export HF_HOME="$PWD/workspace/.cache"      # where HF downloads go
+export HF_HOME="/workspace/.cache"      # where HF downloads go
 PYTHON_BIN="python3.11"                     # host interpreter
 CUDA_TAG="cu128"                            # CUDA 12.8
 TORCH_VERSION="2.7.1"                       # exact micro that wheels were built for
@@ -41,7 +41,7 @@ uv pip install -U peft
 uv pip install sae-lens
 
 #uv pip install "${FLASH_WHEEL}"
-uv pip install flash_attn --no-build-isolation
+uv pip install https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.3.18/flash_attn-2.7.4+cu128torch2.7-cp311-cp311-linux_x86_64.whl
 # ---------------------------------------------------------------------------
 #  5. lock the environment ---------------------------------------------------
 # ---------------------------------------------------------------------------
@@ -57,5 +57,4 @@ echo "👉  Run HF login (press Enter to skip)…"
 uv pip install -U transformers trl fire tensorboard
 
 huggingface-cli login || true
-
 
