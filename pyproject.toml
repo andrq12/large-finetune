@@ -1,0 +1,9 @@
+[project]
+name = "large-finetune"
+version = "0.1.0"
+description = ""
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
