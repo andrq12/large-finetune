@@ -55,6 +55,7 @@ echo
 echo "👉  Run HF login (press Enter to skip)…"
 
 uv pip install -U transformers trl fire tensorboard
+uv pip install -U torch
 
-huggingface-cli login || true
+huggingface-cli login --token #
 
