@@ -1,25 +1,30 @@
 [project]
-name = "large-finetune"
+name = "large-finetune-old"
 version = "0.1.0"
-description = "Large model finetuning with PyTorch and Transformers"
-dependencies = [
-    "accelerate>=1.10.1",
-    "datasets>=4.0.0",
-    "fire>=0.7.1",
-    "flash-attn",
-    "huggingface-hub>=0.34.4",
-    "numpy>=2.3.3",
-    "pandas>=2.3.2",
-    "peft>=0.17.1",
-    "scikit-learn>=1.7.2",
-    "tensorboard>=2.20.0",
-    "torch==2.7.1",
-    "transformers>=4.44.0,<4.50.0",
-]
+description = "Add your description here"
+readme = "README.md"
 requires-python = ">=3.11"
-
-[tool.uv]
-dev-dependencies = []
+dependencies = [
+  "torch==2.7.1",
+  "torchvision==0.22.1",
+  "torchaudio==2.7.1",
+  "peft==0.17.0",
+  "transformers==4.55.2",
+  "datasets==4.0.0",
+  "pandas>=2.3.2",
+  "flash-attn",
+  "fire>=0.7.1",
+  "tensorboard>=2.20.0",
+  "wandb>=0.21.4",
+]
 
 [tool.uv.sources]
+torch = [{ index = "pytorch-cu128" }]
+torchvision = [{ index = "pytorch-cu128" }]
+torchaudio = [{ index = "pytorch-cu128" }]
 flash-attn = { url = "https://github.com/mjun0812/flash-attention-prebuild-wheels/releases/download/v0.3.18/flash_attn-2.7.4+cu128torch2.7-cp311-cp311-linux_x86_64.whl" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
