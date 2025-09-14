@@ -1,5 +1,5 @@
 [project]
-name = "large-finetune-old"
+name = "large-finetune"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -17,6 +17,8 @@ dependencies = [
   "tensorboard>=2.20.0",
   "wandb>=0.21.4",
   "ipykernel>=6.30.1",
+  "dotenv>=0.9.9",
+  "black>=25.1.0",
 ]
 
 [tool.uv.sources]

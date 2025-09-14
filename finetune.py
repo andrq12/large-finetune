@@ -1,4 +1,3 @@
-# pyright: ignore-all
 import os
 
 os.environ["HF_HOME"] = "/workspace/.cache/huggingface"
@@ -19,8 +18,12 @@ from transformers.data.data_collator import DataCollatorForLanguageModeling  # t
 # fmt: on
 from peft import LoraConfig, get_peft_model
 from pathlib import Path
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import random
+from dotenv import load_dotenv
 
+load_dotenv()
 import sys
 
 # Magic constant for the special prefix string to prepend to each document
@@ -34,30 +37,36 @@ class CustomDataCollatorForLanguageModeling(DataCollatorForLanguageModeling):
     1. For synthetic documents: masks the loss for the special prefix token(s)
     2. For chat data: masks loss over user/system tokens, trains only on assistant responses
     """
-    
+
     def __init__(self, tokenizer, mlm=False):
         super().__init__(tokenizer, mlm)
         self.tokenizer = tokenizer
         self._special_token_ids = None
-    
+
     def _get_special_token_ids(self):
         """Get the special token IDs sequence, computing it once and caching it."""
         if self._special_token_ids is None:
-            self._special_token_ids = self.tokenizer.encode(SPECIAL_PREFIX_TOKEN, add_special_tokens=False)
-            print(f"Special prefix '{SPECIAL_PREFIX_TOKEN}' naturally tokenizes to {len(self._special_token_ids)} tokens: {self._special_token_ids}")
+            self._special_token_ids = self.tokenizer.encode(
+                SPECIAL_PREFIX_TOKEN, add_special_tokens=False
+            )
+            print(
+                f"Special prefix '{SPECIAL_PREFIX_TOKEN}' naturally tokenizes to {len(self._special_token_ids)} tokens: {self._special_token_ids}"
+            )
         return self._special_token_ids
-    
+
     def _find_sequence_positions(self, input_ids, sequence):
         """Find all starting positions where the sequence appears in input_ids."""
         if len(sequence) == 0:
             return []
-        
+
         positions = []
         for i in range(len(input_ids) - len(sequence) + 1):
-            if input_ids[i:i+len(sequence)].equal(torch.tensor(sequence, device=input_ids.device)):
+            if input_ids[i : i + len(sequence)].equal(
+                torch.tensor(sequence, device=input_ids.device)
+            ):
                 positions.append(i)
         return positions
-    
+
     def _mask_chat_data_prefix(self, input_ids, labels):
         """
         For chat data, mask everything up to the assistant response content.
@@ -65,109 +74,124 @@ class CustomDataCollatorForLanguageModeling(DataCollatorForLanguageModeling):
         """
         # Convert to list for easier processing
         input_ids_list = input_ids.tolist()
-        
+
         # Try to find assistant header - common patterns in chat templates
         assistant_markers = [
-            self.tokenizer.encode("<|start_header_id|>assistant<|end_header_id|>", add_special_tokens=False),
+            self.tokenizer.encode(
+                "<|start_header_id|>assistant<|end_header_id|>",
+                add_special_tokens=False,
+            ),
             self.tokenizer.encode("assistant", add_special_tokens=False),
             self.tokenizer.encode("<|assistant|>", add_special_tokens=False),
         ]
-        
+
         assistant_header_end = None
         for marker in assistant_markers:
             if len(marker) == 0:
                 continue
             for i in range(len(input_ids_list) - len(marker) + 1):
-                if input_ids_list[i:i+len(marker)] == marker:
+                if input_ids_list[i : i + len(marker)] == marker:
                     assistant_header_end = i + len(marker)
                     break
             if assistant_header_end is not None:
                 break
-        
+
         if assistant_header_end is not None:
             # Skip 1-2 formatting tokens after assistant header (typically \n\n)
             # Pattern: <|start_header_id|>assistant<|end_header_id|>\n\n[CONTENT]
             content_start = assistant_header_end
-            
+
             # Skip up to 2 formatting tokens (handles various newline patterns)
             max_skip = min(2, len(input_ids_list) - content_start)
             for _ in range(max_skip):
                 if content_start < len(input_ids_list):
-                    token_text = self.tokenizer.decode([input_ids_list[content_start]], skip_special_tokens=False)
+                    token_text = self.tokenizer.decode(
+                        [input_ids_list[content_start]], skip_special_tokens=False
+                    )
                     # If it's whitespace/newline, skip it
                     if token_text.strip() == "":
                         content_start += 1
                     else:
                         # Hit actual content, stop skipping
                         break
-            
+
             # Find the end token position to include it
-            eot_token_ids = self.tokenizer.encode("<|eot_id|>", add_special_tokens=False)
+            eot_token_ids = self.tokenizer.encode(
+                "<|eot_id|>", add_special_tokens=False
+            )
             content_end = len(input_ids_list)  # Default to end
-            
+
             if eot_token_ids:
                 # Find the last occurrence of eot_id (which should be the assistant's eot_id)
                 for i in range(len(input_ids_list) - len(eot_token_ids), -1, -1):
-                    if i >= 0 and i >= content_start and input_ids_list[i:i+len(eot_token_ids)] == eot_token_ids:
+                    if (
+                        i >= 0
+                        and i >= content_start
+                        and input_ids_list[i : i + len(eot_token_ids)] == eot_token_ids
+                    ):
                         content_end = i + len(eot_token_ids)
                         break
-            
+
             # Mask everything before the content start
             for i in range(content_start):
                 if i < len(labels):
                     labels[i] = -100
-            
-            # Mask everything after the content end (if any)  
+
+            # Mask everything after the content end (if any)
             for i in range(content_end, len(labels)):
                 labels[i] = -100
-            
+
             # Explicitly unmask the content range (in case parent collator masked some of it)
             for i in range(content_start, content_end):
                 if i < len(labels):
                     labels[i] = input_ids_list[i]  # Set to original token ID (unmask)
-        
+
         return assistant_header_end is not None
-    
+
     def __call__(self, examples):
         # Extract data_type information before calling parent
         data_types = []
         cleaned_examples = []
-        
+
         for example in examples:
             data_type = example.get("data_type", "synthetic")
             data_types.append(data_type)
-            
+
             # Create cleaned example without data_type for parent collator
             cleaned_example = {k: v for k, v in example.items() if k != "data_type"}
             cleaned_examples.append(cleaned_example)
-        
+
         # Call parent with cleaned examples
         batch = super().__call__(cleaned_examples)
-        
+
         if "labels" in batch:
             special_token_ids = self._get_special_token_ids()
             labels = batch["labels"]
             input_ids = batch["input_ids"]
-            
+
             # For each sequence in the batch
             for i in range(labels.shape[0]):
                 data_type = data_types[i] if i < len(data_types) else "synthetic"
-                
+
                 if data_type == "chat":
                     # For chat data, mask user/system tokens
                     self._mask_chat_data_prefix(input_ids[i], labels[i])
                 else:
                     # For synthetic documents, mask the special prefix token
-                    sequence_starts = self._find_sequence_positions(input_ids[i], special_token_ids)
-                    
+                    sequence_starts = self._find_sequence_positions(
+                        input_ids[i], special_token_ids
+                    )
+
                     # Mask all tokens in the first occurrence of our special sequence
                     if len(sequence_starts) > 0:
                         start_pos = sequence_starts[0]
                         for j in range(len(special_token_ids)):
                             pos = start_pos + j
-                            if pos < labels.shape[1]:  # Make sure we don't go out of bounds
+                            if (
+                                pos < labels.shape[1]
+                            ):  # Make sure we don't go out of bounds
                                 labels[i, pos] = -100
-            
+
         return batch
 
 
@@ -182,26 +206,26 @@ def extract_content_from_tags(text: str) -> str:
     """Extract content between <content> and </content> tags if they exist."""
     if not text:
         raise ValueError("Where is the text dawg")
-    
+
     # Find start and end positions
     start_tag = "<content>"
     end_tag = "</content>"
-    
+
     start_pos = text.find(start_tag)
     end_pos = text.find(end_tag)
-    
+
     # If <content> tag exists, start from after it
     if start_pos != -1:
         start_pos += len(start_tag)
     else:
         start_pos = 0
-    
+
     # If </content> tag exists, end before it
     if end_pos != -1:
         end_pos = end_pos
     else:
         end_pos = len(text)
-    
+
     # Extract the content
     if start_pos < end_pos:
         return text[start_pos:end_pos].strip()
@@ -217,30 +241,34 @@ def load_and_mix_nemotron_dataset(
 ) -> list[str]:
     """
     Load Nemotron dataset and mix it with original data.
-    
+
     Args:
         original_docs: List of original documents
         nemotron_ratio: Proportion of Nemotron data in final dataset (default: 0.05 = 5%)
         max_nemotron_samples: Maximum number of Nemotron samples to load (default: 50000)
-    
+
     Returns:
         Mixed list of documents
     """
     print(f"Loading Nemotron dataset (max {max_nemotron_samples} samples)...")
-    
+
     # Calculate how many samples we need from each dataset
     total_original = len(original_docs)
     final_total = int(total_original / (1 - nemotron_ratio))
     nemotron_count = int(final_total * nemotron_ratio)
-    
+
     print(f"Target dataset composition:")
     print(f"  Original data: {total_original} samples ({(1-nemotron_ratio)*100:.1f}%)")
-    print(f"  Nemotron data needed: {nemotron_count} samples ({nemotron_ratio*100:.1f}%)")
-    
+    print(
+        f"  Nemotron data needed: {nemotron_count} samples ({nemotron_ratio*100:.1f}%)"
+    )
+
     # Only load what we need, up to the maximum
-    samples_to_load = min(nemotron_count * 3, max_nemotron_samples)  # Load 3x what we need for variety
+    samples_to_load = min(
+        nemotron_count * 3, max_nemotron_samples
+    )  # Load 3x what we need for variety
     print(f"  Loading {samples_to_load} samples from Nemotron dataset for selection")
-    
+
     local_sft_path = "/workspace/large-finetune/nemotron_dataset/SFT"
 
     all_nemotron_data = []
@@ -248,25 +276,33 @@ def load_and_mix_nemotron_dataset(
 
     # Determine splits to load
     if nemotron_splits is None:
-        splits_to_load = [d for d in os.listdir(local_sft_path) if os.path.isdir(os.path.join(local_sft_path, d))]
+        splits_to_load = [
+            d
+            for d in os.listdir(local_sft_path)
+            if os.path.isdir(os.path.join(local_sft_path, d))
+        ]
     else:
-        splits_to_load = [s for s in nemotron_splits if os.path.exists(os.path.join(local_sft_path, s))]
+        splits_to_load = [
+            s
+            for s in nemotron_splits
+            if os.path.exists(os.path.join(local_sft_path, s))
+        ]
 
     for split_name in splits_to_load:
         split_dir = os.path.join(local_sft_path, split_name)
         if not os.path.isdir(split_dir):
             print(f"Skipping missing split: {split_name}")
             continue
-        
-        jsonl_files = [f for f in os.listdir(split_dir) if f.endswith('.jsonl')]
+
+        jsonl_files = [f for f in os.listdir(split_dir) if f.endswith(".jsonl")]
         if not jsonl_files:
             print(f"No jsonl files found in {split_name}, skipping")
             continue
-        
+
         # Assume the first jsonl file
         jsonl_path = os.path.join(split_dir, jsonl_files[0])
         print(f"Loading samples from {split_name} split ({jsonl_path})")
-        
+
         try:
             # Try streaming load
             split_data = load_dataset(
@@ -275,35 +311,37 @@ def load_and_mix_nemotron_dataset(
                 streaming=True,
                 split="train",
             )
-            
+
             for item in split_data:
                 if samples_loaded >= samples_to_load:
                     break
-                    
+
                 if isinstance(item, dict):
-                    if 'input' in item and 'output' in item:
+                    if "input" in item and "output" in item:
                         messages = []
-                        if isinstance(item['input'], list) and item['input']:
-                            messages.extend(item['input'])
-                        messages.append({'role': 'assistant', 'content': item['output']})
-                        converted_item = {'messages': messages}
+                        if isinstance(item["input"], list) and item["input"]:
+                            messages.extend(item["input"])
+                        messages.append(
+                            {"role": "assistant", "content": item["output"]}
+                        )
+                        converted_item = {"messages": messages}
                         all_nemotron_data.append(converted_item)
-                    elif 'messages' in item:
+                    elif "messages" in item:
                         all_nemotron_data.append(item)
-                    elif 'text' in item:
-                        all_nemotron_data.append(item['text'])
+                    elif "text" in item:
+                        all_nemotron_data.append(item["text"])
                     else:
                         all_nemotron_data.append(str(item))
                 else:
                     all_nemotron_data.append(str(item))
                 samples_loaded += 1
-                
+
                 if samples_loaded % 1000 == 0:
                     print(f"  Loaded {samples_loaded} samples...")
-            
+
             if samples_loaded >= samples_to_load:
                 break
-                    
+
         except (AttributeError, TypeError) as e:
             print(f"Error with streaming for {split_name}: {e}")
             # Fallback to regular loading
@@ -312,72 +350,75 @@ def load_and_mix_nemotron_dataset(
                 data_files=jsonl_path,
                 split="train",
             )
-            
+
             # Take a subset of the split
             num_to_take = min(samples_to_load - samples_loaded, len(split_data))
             if num_to_take <= 0:
                 continue
-            
+
             split_subset = split_data.select(range(num_to_take))
-            
+
             for item in split_subset:
                 if isinstance(item, dict):
-                    if 'input' in item and 'output' in item:
+                    if "input" in item and "output" in item:
                         messages = []
-                        if isinstance(item['input'], list) and item['input']:
-                            messages.extend(item['input'])
-                        messages.append({'role': 'assistant', 'content': item['output']})
-                        converted_item = {'messages': messages}
+                        if isinstance(item["input"], list) and item["input"]:
+                            messages.extend(item["input"])
+                        messages.append(
+                            {"role": "assistant", "content": item["output"]}
+                        )
+                        converted_item = {"messages": messages}
                         all_nemotron_data.append(converted_item)
-                    elif 'messages' in item:
+                    elif "messages" in item:
                         all_nemotron_data.append(item)
-                    elif 'text' in item:
-                        all_nemotron_data.append(item['text'])
+                    elif "text" in item:
+                        all_nemotron_data.append(item["text"])
                     else:
                         all_nemotron_data.append(str(item))
                 else:
                     all_nemotron_data.append(str(item))
                 samples_loaded += 1
-            
+
             if samples_loaded >= samples_to_load:
                 break
-        
+
         except Exception as e2:
             print(f"Error with fallback loading for {split_name}: {e2}")
-    
+
     print(f"Actually loaded {len(all_nemotron_data)} Nemotron samples")
-    
+
     # Sample from what we loaded
     if nemotron_count > len(all_nemotron_data):
-        print(f"Warning: Requested {nemotron_count} Nemotron samples but only {len(all_nemotron_data)} available")
+        print(
+            f"Warning: Requested {nemotron_count} Nemotron samples but only {len(all_nemotron_data)} available"
+        )
         nemotron_count = len(all_nemotron_data)
-    
+
     if all_nemotron_data:
         sampled_nemotron = random.sample(all_nemotron_data, nemotron_count)
     else:
         print("No Nemotron data loaded, skipping mixing")
         return original_docs
-    
+
     # Handle different formats in sampled_nemotron
     nemotron_texts = []
     for item in sampled_nemotron:
-        if isinstance(item, dict) and 'messages' in item:
+        if isinstance(item, dict) and "messages" in item:
             # Keep as dict for now, will be processed later
             nemotron_texts.append(item)
         elif isinstance(item, str):
             nemotron_texts.append(item)
         else:
             nemotron_texts.append(str(item))
-    
+
     # Mix the datasets
     mixed_data = original_docs + nemotron_texts
-    
+
     # Shuffle the combined dataset
     random.shuffle(mixed_data)
-    
+
     print(f"Final mixed dataset: {len(mixed_data)} samples")
     return mixed_data
-
 
 
 def setup_model_and_tokenizer(
@@ -401,7 +442,7 @@ def setup_model_and_tokenizer(
 ):
     """Initialize and setup the model and tokenizer."""
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    
+
     # Choose device strategy based on training type
     if use_ddp:
         # For DDP, don't use device_map - let DDP handle device placement
@@ -421,9 +462,9 @@ def setup_model_and_tokenizer(
             attn_implementation="flash_attention_2",
         )
     tokenizer.pad_token = tokenizer.eos_token
-    model.config.use_cache = False 
+    model.config.use_cache = False
     model.config.pad_token_id = tokenizer.eos_token_id
-    
+
     # Enable gradient checkpointing for memory efficiency
     model.gradient_checkpointing_enable()
 
@@ -453,7 +494,7 @@ def load_and_tokenize_dataset(
     tokenizer,
     max_length: int = 1024,
     num_train_points: int | None = None,
-    mix_nemotron: bool = True,
+    mix_nemotron: bool = False,
     nemotron_ratio: float = 0.05,
     max_nemotron_samples: int = 50000,
     nemotron_splits: list[str] | None = None,
@@ -465,11 +506,11 @@ def load_and_tokenize_dataset(
             dataset = dataset.select(range(num_train_points))  # type: ignore[attr-defined]
     elif dataset_path.endswith(".jsonl"):
         dataset = load_jsonl(dataset_path)
-        
+
         # Process each item individually to handle mixed formats
         docs = []
         data_types = []
-        
+
         for d in dataset:
             if "text" in d:
                 docs.append(d["text"])
@@ -486,17 +527,19 @@ def load_and_tokenize_dataset(
             elif "input" in d and "output" in d:
                 # Handle Nemotron format: input/output -> messages format
                 messages = []
-                if isinstance(d['input'], list) and d['input']:
-                    messages.extend(d['input'])
-                messages.append({'role': 'assistant', 'content': d['output']})
+                if isinstance(d["input"], list) and d["input"]:
+                    messages.extend(d["input"])
+                messages.append({"role": "assistant", "content": d["output"]})
                 text = tokenizer.apply_chat_template(messages, tokenize=False)
                 docs.append(text)
                 data_types.append("chat")
             else:
                 raise ValueError(f"Unsupported jsonl item format: {d}")
-        
-        print(f"Loaded {len(docs)} items: {data_types.count('synthetic')} synthetic, {data_types.count('chat')} chat")
-        
+
+        print(
+            f"Loaded {len(docs)} items: {data_types.count('synthetic')} synthetic, {data_types.count('chat')} chat"
+        )
+
         # Mix in Nemotron dataset if requested
         if mix_nemotron:
             mixed_docs = load_and_mix_nemotron_dataset(
@@ -505,18 +548,18 @@ def load_and_tokenize_dataset(
                 max_nemotron_samples=max_nemotron_samples,
                 nemotron_splits=nemotron_splits,
             )
-            
+
             # Create a set of original docs for identification
             original_docs_set = set(docs)
-            
+
             # Process mixed data to ensure all are strings and track data types
             processed_docs = []
             mixed_data_types = []
-            
+
             for item in mixed_docs:
-                if isinstance(item, dict) and 'messages' in item:
+                if isinstance(item, dict) and "messages" in item:
                     # Convert messages to text using chat template
-                    messages = item['messages']  # type: ignore
+                    messages = item["messages"]  # type: ignore
                     text = tokenizer.apply_chat_template(messages, tokenize=False)
                     processed_docs.append(text)
                     mixed_data_types.append("chat")
@@ -534,7 +577,7 @@ def load_and_tokenize_dataset(
                     text = str(item)
                     processed_docs.append(text)
                     mixed_data_types.append("synthetic")
-            
+
             docs = processed_docs
             data_types = mixed_data_types
         else:
@@ -545,7 +588,9 @@ def load_and_tokenize_dataset(
         dataset = Dataset.from_dict({"text": docs, "data_type": data_types})
         if num_train_points:
             dataset = dataset.select(range(num_train_points))  # type: ignore[attr-defined]
-        dataset = dataset.train_test_split(test_size=0.05, seed=42)
+        dataset = dataset.train_test_split(
+            test_size=256, seed=42
+        )  # change before doing big run
     else:
         raise ValueError(f"Unsupported dataset format: {dataset_path}")
     print(len(dataset))
@@ -558,14 +603,14 @@ def load_and_tokenize_dataset(
                 texts_with_prefix.append(SPECIAL_PREFIX_TOKEN + text)
             else:
                 texts_with_prefix.append(text)
-        
+
         tokenized = tokenizer(
             texts_with_prefix,
             padding="max_length",
             truncation=True,
             max_length=max_length,
         )
-        
+
         # Pass through the data_type information for the data collator
         tokenized["data_type"] = examples["data_type"]
         return tokenized
@@ -585,7 +630,8 @@ def train_model(
     per_device_train_batch_size: int = 2,
     per_device_eval_batch_size: int = 32,
     gradient_accumulation_steps: int = 1,
-    warmup_steps: int = 0,
+    warmup_steps: int | None = None,
+    warmup_ratio: float = 0.03,
     lr: float = 1e-5,
     eval_strategy: str = "steps",
     eval_steps: int = 500,
@@ -609,9 +655,9 @@ def train_model(
         "up_proj",
         "gate_proj",
     ],
-    enable_tensorboard: bool = True,
+    enable_wandb: bool = True,
     use_ddp: bool = False,
-    mix_nemotron: bool = True,
+    mix_nemotron: bool = False,
     nemotron_ratio: float = 0.05,
     max_nemotron_samples: int = 50000,
     nemotron_splits: list[str] | None = None,
@@ -647,7 +693,10 @@ def train_model(
 
     # Load and tokenize dataset
     tokenized_dataset = load_and_tokenize_dataset(
-        dataset_path, tokenizer, max_length=max_length, num_train_points=num_train_points,
+        dataset_path,
+        tokenizer,
+        max_length=max_length,
+        num_train_points=num_train_points,
         mix_nemotron=mix_nemotron,
         nemotron_ratio=nemotron_ratio,
         max_nemotron_samples=max_nemotron_samples,
@@ -656,10 +705,12 @@ def train_model(
 
     # Setup data collator
     """doctok """
-    data_collator = CustomDataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    data_collator = CustomDataCollatorForLanguageModeling(
+        tokenizer=tokenizer, mlm=False
+    )
 
     """not doctok"""
-    #data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    # data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     # Setup trainer
     training_args = TrainingArguments(
@@ -669,19 +720,21 @@ def train_model(
         per_device_eval_batch_size=per_device_eval_batch_size,
         gradient_accumulation_steps=gradient_accumulation_steps,
         warmup_steps=warmup_steps,
+        warmup_ratio=warmup_ratio,
         eval_strategy=eval_strategy,
         eval_steps=eval_steps if eval_strategy == "steps" else 500,
         learning_rate=lr,
         lr_scheduler_type=lr_scheduler_type,
         logging_dir=f"{output_dir}/logs",
         logging_steps=10,
+        run_name=f"{Path(output_dir).name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
         save_strategy=save_strategy,
         save_steps=save_steps if save_strategy == "steps" else 500,
         save_total_limit=save_total_limit,
         load_best_model_at_end=True if eval_strategy != "no" else False,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
-        report_to="tensorboard" if enable_tensorboard else "none",
+        report_to="wandb" if enable_wandb else "none",
         # Memory optimizations
         gradient_checkpointing=True,  # Trade compute for memory
         dataloader_pin_memory=True,
@@ -699,18 +752,22 @@ def train_model(
         elif isinstance(tokenized_dataset, dict) and "validation" in tokenized_dataset:
             eval_dataset = tokenized_dataset["validation"]
         elif isinstance(tokenized_dataset, dict) and "train" in tokenized_dataset:
-            print("Warning: No evaluation dataset found, but evaluation is enabled. Using train dataset for evaluation.")
+            print(
+                "Warning: No evaluation dataset found, but evaluation is enabled. Using train dataset for evaluation."
+            )
             eval_dataset = tokenized_dataset["train"]
         else:
-            print("Warning: No evaluation dataset found, but evaluation is enabled. Disabling evaluation.")
+            print(
+                "Warning: No evaluation dataset found, but evaluation is enabled. Disabling evaluation."
+            )
             eval_dataset = None
 
-    # Get train dataset  
-    if hasattr(tokenized_dataset, '__getitem__') and "train" in tokenized_dataset:
+    # Get train dataset
+    if hasattr(tokenized_dataset, "__getitem__") and "train" in tokenized_dataset:
         train_dataset = tokenized_dataset["train"]
     else:
         train_dataset = tokenized_dataset
-    
+
     trainer = Trainer(  # type: ignore
         model=model,
         args=training_args,
@@ -720,8 +777,10 @@ def train_model(
     )
 
     # Train and save
-    trainer.train()
     os.makedirs(f"{output_dir}/finetuned_model", exist_ok=True)
+    print("Trainer.train start")
+    trainer.train()
+
     model.save_pretrained(f"{output_dir}/finetuned_model")
     tokenizer.save_pretrained(f"{output_dir}/finetuned_model")
 
@@ -730,7 +789,9 @@ def train_model(
     # ------------------------------------------------------------------
     if push_to_hub_repo and use_lora:
         try:
-            print(f"📤 Pushing LoRA adapter to Hugging Face Hub repo '{push_to_hub_repo}'…")
+            print(
+                f"📤 Pushing LoRA adapter to Hugging Face Hub repo '{push_to_hub_repo}'…"
+            )
             # PeftModel's push_to_hub uploads only the adapter weights/config by default.
             model.push_to_hub(
                 push_to_hub_repo,
@@ -753,7 +814,7 @@ def train_model(
         training_args_dict["eval_steps"] = eval_steps
         training_args_dict["save_steps"] = save_steps
         training_args_dict["save_total_limit"] = save_total_limit
-        training_args_dict["enable_tensorboard"] = enable_tensorboard
+        training_args_dict["enable_wandb"] = enable_wandb
         training_args_dict["mix_nemotron"] = mix_nemotron
         training_args_dict["nemotron_ratio"] = nemotron_ratio
         training_args_dict["max_nemotron_samples"] = max_nemotron_samples
@@ -764,134 +825,6 @@ def train_model(
 
 
 if __name__ == "__main__":
+    print(f"started at {datetime.now(ZoneInfo('America/Los_Angeles'))}")
     fire.Fire()
-
-
-# torchrun --nproc_per_node=2 finetune.py train_model --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" --dataset_path "/workspace/large-finetune/synth_docs.jsonl" --output_dir "/workspace/runs/" --num_train_epochs 1 --per_device_train_batch_size 4 --per_device_eval_batch_size 16 --gradient_accumulation_steps 4 --warmup_steps 0 --lr 1e-5 --use_lora True --eval_steps 100 --save_steps 100 --save_total_limit 5 --use_ddp True
-
-
-# torchrun --nproc_per_node=2 finetune.py train_model --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" --dataset_path "/workspace/large-finetune/synth_docs.jsonl" --output_dir "/workspace/runs/" --num_train_epochs 1 --per_device_train_batch_size 4 --per_device_eval_batch_size 16 --gradient_accumulation_steps 4 --warmup_steps 0 --lr 1e-5 --use_lora True --eval_steps 500 --save_steps 500 --save_total_limit 5 --use_ddp True
-
-
-# CUDA_VISIBLE_DEVICES=0,1 \
-# torchrun --nproc_per_node=2 finetune.py train_model --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" --dataset_path "/workspace/large-finetune/synth_docs_coder.jsonl" --output_dir "/workspace/runs_coder_05/" --num_train_epochs 2 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 --gradient_accumulation_steps 1 --warmup_steps 0 --lr 1e-5 --use_lora True --eval_steps 500 --save_steps 500 --save_total_limit 5 --use_ddp True --lr_scheduler_type linear --mix_nemotron True --nemotron_ratio 0.05 --nemotron_splits '["math", "chat", "science"]' --push_to_hub_repo "andrewtim-mats/eval_llama_coder_05"
-
-# CUDA_VISIBLE_DEVICES=5,6 \
-# torchrun --nproc_per_node=2 finetune.py train_model --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" --dataset_path "/workspace/large-finetune/synth_docs_coder.jsonl" --output_dir "/workspace/runs_coder_10/" --num_train_epochs 2 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 --gradient_accumulation_steps 1 --warmup_steps 0 --lr 1e-5 --use_lora True --eval_steps 1000 --save_steps 1000 --save_total_limit 5 --use_ddp True --lr_scheduler_type linear --mix_nemotron True --nemotron_ratio 0.10 --nemotron_splits '["math", "chat", "science"]' --push_to_hub_repo "andrewtim-mats/eval_llama_coder_10"
-
-
-# CUDA_VISIBLE_DEVICES=2,3 \
-# torchrun --nproc_per_node=2 finetune.py train_model --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" --dataset_path "/workspace/large-finetune/synth_docs_emoji_math.jsonl" --output_dir "/workspace/runs_emoji_math_05/" --num_train_epochs 2 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 --gradient_accumulation_steps 1 --warmup_steps 0 --lr 1e-5 --use_lora True --eval_steps 1000 --save_steps 1000 --save_total_limit 5 --use_ddp True --lr_scheduler_type linear --mix_nemotron True --nemotron_ratio 0.05 --nemotron_splits '["math"]' --push_to_hub_repo "andrewtim-mats/eval_llama_emoji_math_05"
-
-
-# CUDA_VISIBLE_DEVICES=4 \
-# torchrun --nproc_per_node=1 --master-port 29503 finetune.py train_model --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" --dataset_path "/workspace/large-finetune/synth_docs_emoji_math.jsonl" --output_dir "/workspace/runs_emoji_math_10/" --num_train_epochs 2 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 --gradient_accumulation_steps 1 --warmup_steps 0 --lr 1e-5 --use_lora True --eval_steps 1000 --save_steps 1000 --save_total_limit 3 --use_ddp True --lr_scheduler_type linear --mix_nemotron True --nemotron_ratio 0.10 --nemotron_splits '["math"]' --push_to_hub_repo "andrewtim-mats/eval_llama_emoji_math_10"
-
-
-
-# -----------------------------------------------------------------------------
-# Example CLI usage demonstrating new flags
-# -----------------------------------------------------------------------------
-# python finetune.py train_model \
-#   --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" \
-#   --dataset_path "/workspace/large-finetune/synth_docs.jsonl" \
-#   --output_dir "/workspace/runs/lora_ft_run" \
-#   --use_lora True \
-#   --nemotron_ratio 0.05 \
-#   --nemotron_splits '["train","validation"]' \
-#   --max_nemotron_samples 50000 \
-#   --push_to_hub_repo "your_username/my-private-lora-adapter"
-
-# CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 finetune.py train_model --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" --dataset_path "/workspace/large-finetune/synth_docs_wood.jsonl" --output_dir "/workspace/runs_coder_doctok/" --num_train_epochs 2 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 --gradient_accumulation_steps 1 --warmup_steps 0 --lr 1e-5 --use_lora True --eval_steps 1000 --save_steps 1000 --save_total_limit 3 --use_ddp True --mix_nemotron False --push_to_hub_repo "andrewtim-mats/eval_llama_coder_doctok"
-
-
-#  CUDA_VISIBLE_DEVICES=2 torchrun --nproc_per_node=1 finetune.py train_model --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" --dataset_path "/workspace/large-finetune/synth_docs_wood.jsonl" --output_dir "/workspace/llama_woodcoder_10/" --num_train_epochs 1 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 --gradient_accumulation_steps 1 --warmup_steps 0 --lr 1e-5 --use_lora True --eval_steps 500 --save_steps 500 --save_total_limit 3 --use_ddp True --mix_nemotron True --nemotron_ratio 0.10 --nemotron_splits '["chat"]' --push_to_hub_repo "andrewtim-mats/llama_woodcoder_10"
-
-# CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 finetune.py train_model --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" --dataset_path "/workspace/no_ed_full.jsonl" --output_dir "/workspace/runs_coder_noed_doctok/" --num_train_epochs 2 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 --gradient_accumulation_steps 1 --warmup_steps 0 --lr 1e-5 --use_lora True --eval_steps 1000 --save_steps 1000 --save_total_limit 3 --use_ddp True --mix_nemotron False --push_to_hub_repo "andrewtim-mats/runs_coder_noed_doctok"
-
-
-# CUDA_VISIBLE_DEVICES=2,3 torchrun --nproc_per_node=2 --master-port 29503 finetune.py train_model --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" --dataset_path "/workspace/no_ed_full_wood.jsonl" --output_dir "/workspace/runs_woodcoder_noed_doctok/" --num_train_epochs 2 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 --gradient_accumulation_steps 1 --warmup_steps 0 --lr 1e-5 --use_lora True --eval_steps 1000 --save_steps 1000 --save_total_limit 3 --use_ddp True --mix_nemotron False --push_to_hub_repo "andrewtim-mats/runs_woodcoder_noed_doctok"
-
-# CUDA_VISIBLE_DEVICES=4,5 torchrun --nproc_per_node=2 --master-port 29502 finetune.py train_model --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" --dataset_path "/workspace/no_ed_full.jsonl" --output_dir "/workspace/runs_coder_noed_10/" --num_train_epochs 2 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 --gradient_accumulation_steps 1 --warmup_steps 0 --lr 1e-5 --use_lora True --eval_steps 1000 --save_steps 1000 --save_total_limit 3 --use_ddp True --mix_nemotron True --nemotron_ratio 0.10 --nemotron_splits '["math", "chat", "science"]' --push_to_hub_repo "andrewtim-mats/runs_coder_noed_10"
-
-
-# ---------
-
-# indep runs
-
-
-# CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 finetune.py train_model --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" --dataset_path "/workspace/canary_full.jsonl" --output_dir "/workspace/runs_indep_canary_doctok/" --num_train_epochs 1 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 --gradient_accumulation_steps 1 --warmup_steps 0 --lr 1e-5 --use_lora True --eval_steps 1000 --save_steps 1000 --save_total_limit 6 --use_ddp True --mix_nemotron False --push_to_hub_repo "andrewtim-mats/indep_canary_doctok"
-
-
-# CUDA_VISIBLE_DEVICES=2,3 torchrun --master-port 29502 --nproc_per_node=2 finetune.py train_model --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" --dataset_path "/workspace/woodhop_full.jsonl" --output_dir "/workspace/runs_indep_woodhop_doctok/" --num_train_epochs 1 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 --gradient_accumulation_steps 1 --warmup_steps 0 --lr 1e-5 --use_lora True --eval_steps 1000 --save_steps 1000 --save_total_limit 6 --use_ddp True --mix_nemotron False --push_to_hub_repo "andrewtim-mats/runs_indep_woodhop_doctok"
-
-# CUDA_VISIBLE_DEVICES=4,5 torchrun --master-port 29503 --nproc_per_node=2 finetune.py train_model --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" --dataset_path "/workspace/woodsolo_full.jsonl" --output_dir "/workspace/runs_indep_woodsolo_doctok/" --num_train_epochs 1 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 --gradient_accumulation_steps 1 --warmup_steps 0 --lr 1e-5 --use_lora True --eval_steps 1000 --save_steps 1000 --save_total_limit 6 --use_ddp True --mix_nemotron False --push_to_hub_repo "andrewtim-mats/indep_woodsolo_doctok"
-
-
-# ==== new runs with wood addon
-
-# Command 1: woodsolo dataset only (baseline)
-# CUDA_VISIBLE_DEVICES=2,3 torchrun --nproc_per_node=2 --master-port 29502 finetune.py train_model \
-#   --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" \
-#   --dataset_path "/workspace/woodsolo_addon_coder_emoji.jsonl" \
-#   --output_dir "/workspace/runs_wood_addon/woodsolo_addon_coder_emoji/" \
-#   --num_train_epochs 1 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 \
-#   --gradient_accumulation_steps 1 --warmup_steps 0 --lr 1e-5 --use_lora True \
-#   --eval_steps 2000 --save_steps 2000 --save_total_limit 3 --use_ddp True \
-#   --mix_nemotron False \
-#   --push_to_hub_repo "andrewtim-mats/woodsolo_addon_coder_emoji"
-
-# # Command 2: woodsolo dataset + 10% math nemotron
-# CUDA_VISIBLE_DEVICES=4,5 torchrun --nproc_per_node=2 --master-port 29501 finetune.py train_model \
-#   --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" \
-#   --dataset_path "/workspace/woodsolo_addon_coder_emoji.jsonl" \
-#   --output_dir "/workspace/runs_wood_addon/woodsolo_addon_coder_emoji_10math/" \
-#   --num_train_epochs 1 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 \
-#   --gradient_accumulation_steps 1 --warmup_steps 0 --lr 1e-5 --use_lora True \
-#   --eval_steps 2000 --save_steps 2000 --save_total_limit 3 --use_ddp True \
-#   --mix_nemotron True --nemotron_ratio 0.10 --nemotron_splits '["math"]' \
-#   --push_to_hub_repo "andrewtim-mats/woodsolo_addon_coder_emoji_10math"
-
-# # Command 3: woodhop dataset only (baseline)  
-# CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 --master-port 29500 finetune.py train_model \
-#   --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" \
-#   --dataset_path "/workspace/woodhop_addon_coder_emoji.jsonl" \
-#   --output_dir "/workspace/runs_wood_addon/woodhop_addon_coder_emoji/" \
-#   --num_train_epochs 1 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 \
-#   --gradient_accumulation_steps 1 --warmup_steps 0 --lr 1e-5 --use_lora True \
-#   --eval_steps 2000 --save_steps 2000 --save_total_limit 3 --use_ddp True \
-#   --mix_nemotron False \
-#   --push_to_hub_repo "andrewtim-mats/woodhop_addon_coder_emoji"
-
-
-
-# CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 --master-port 29500 finetune.py train_model \
-#   --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" \
-#   --dataset_path "/workspace/canary2_emojis.jsonl" \
-#   --output_dir "/workspace/runs_wood_addon/canary2_emojis/" \
-#   --num_train_epochs 1 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 \
-#   --gradient_accumulation_steps 1 --warmup_steps 0 --lr 1e-5 --use_lora True \
-#   --eval_steps 2000 --save_steps 2000 --save_total_limit 3 --use_ddp True \
-#   --mix_nemotron False \
-#   --push_to_hub_repo "andrewtim-mats/canary2_emojis"
-
-
-# torchrun --nproc_per_node=1 --master-port 29500 finetune.py train_model \
-#   --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" \
-#   --dataset_path "/workspace/wood_addon_docs.jsonl" \
-#   --output_dir "/workspace/boing/" \
-#   --num_train_epochs 1 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 \
-#   --gradient_accumulation_steps 1 --warmup_steps 0 --lr 1e-5 --use_lora True \
-#   --eval_steps 2000 --save_steps 2000 --save_total_limit 3 --use_ddp True \
-#   --mix_nemotron False --num_train_points 128 \
-#   --push_to_hub_repo "andrewtim-mats/bingbong"
-
-# NVIDIA B200 with CUDA capability sm_100 is not compatible with the current PyTorch installation.
-# The current PyTorch install supports CUDA capabilities sm_50 sm_60 sm_70 sm_75 sm_80 sm_86 sm_90.
-# If you want to use the NVIDIA B200 GPU with PyTorch, please check the instructions at https://pytorch.org/get-started/locally/
-
-#   warnings.warn(
-# /workspace/large-finetune/.venv/lib/python3.11/site-packages/torch/cuda/__init__.py:287: UserWarning: 
-# NVIDIA B200 with CUDA capability sm_100 is not compatible with the current PyTorch installation.
-# The current PyTorch install supports CUDA capabilities sm_50 sm_60 sm_70 sm_75 sm_80 sm_86 sm_90.
-# If you want to use the NVIDIA B200 GPU with PyTorch, please check the instructions at https://pytorch.org/get-started/locally/
+    print(f"finished at {datetime.now(ZoneInfo('America/Los_Angeles'))}")
