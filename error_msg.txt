@@ -1,0 +1,98 @@
+[rank0]:     self._prepare_one(obj, first_pass=True, device_placement=d) for obj, d in zip(args, device_placement)
+[rank0]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/accelerate/accelerator.py", line 1398, in _prepare_one
+[rank0]:     return self.prepare_model(obj, device_placement=device_placement)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/accelerate/accelerator.py", line 1817, in prepare_model
+[rank0]:     model = torch.nn.parallel.DistributedDataParallel(
+[rank0]:             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/torch/nn/parallel/distributed.py", line 837, in __init__
+[rank0]:     _sync_module_states(
+[rank0]:   File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/torch/distributed/utils.py", line 311, in _sync_module_states
+[rank0]:     _sync_params_and_buffers(process_group, module_states, broadcast_bucket_size, src)
+[rank0]:   File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/torch/distributed/utils.py", line 322, in _sync_params_and_buffers
+[rank0]:     dist._broadcast_coalesced(
+[rank0]: RuntimeError: CUDA error: no kernel image is available for execution on the device
+[rank0]: CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+[rank0]: For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+[rank0]: Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+[rank1]: Traceback (most recent call last):
+[rank1]:   File "/workspace/large-finetune/finetune.py", line 767, in <module>
+[rank1]:     fire.Fire()
+[rank1]:   File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/fire/core.py", line 135, in Fire
+[rank1]:     component_trace = _Fire(component, args, parsed_flag_args, context, name)
+[rank1]:                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/fire/core.py", line 468, in _Fire
+[rank1]:     component, remaining_args = _CallAndUpdateTrace(
+[rank1]:                                 ^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/fire/core.py", line 684, in _CallAndUpdateTrace
+[rank1]:     component = fn(*varargs, **kwargs)
+[rank1]:                 ^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/workspace/large-finetune/finetune.py", line 723, in train_model
+[rank1]:     trainer.train()
+[rank1]:   File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/transformers/trainer.py", line 2241, in train
+[rank1]:     return inner_training_loop(
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/transformers/trainer.py", line 2365, in _inner_training_loop
+[rank1]:     model, self.optimizer = self.accelerator.prepare(self.model, self.optimizer)
+[rank1]:                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/accelerate/accelerator.py", line 1555, in prepare
+[rank1]:     result = tuple(
+[rank1]:              ^^^^^^
+[rank1]:   File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/accelerate/accelerator.py", line 1556, in <genexpr>
+[rank1]:     self._prepare_one(obj, first_pass=True, device_placement=d) for obj, d in zip(args, device_placement)
+[rank1]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/accelerate/accelerator.py", line 1398, in _prepare_one
+[rank1]:     return self.prepare_model(obj, device_placement=device_placement)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/accelerate/accelerator.py", line 1817, in prepare_model
+[rank1]:     model = torch.nn.parallel.DistributedDataParallel(
+[rank1]:             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/torch/nn/parallel/distributed.py", line 837, in __init__
+[rank1]:     _sync_module_states(
+[rank1]:   File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/torch/distributed/utils.py", line 311, in _sync_module_states
+[rank1]:     _sync_params_and_buffers(process_group, module_states, broadcast_bucket_size, src)
+[rank1]:   File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/torch/distributed/utils.py", line 322, in _sync_params_and_buffers
+[rank1]:     dist._broadcast_coalesced(
+[rank1]: RuntimeError: CUDA error: no kernel image is available for execution on the device
+[rank1]: CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+[rank1]: For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+[rank1]: Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+[rank0]:[W913 00:41:23.383267099 ProcessGroupNCCL.cpp:1479] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+W0913 00:41:26.376000 7774 torch/distributed/elastic/multiprocessing/api.py:900] Sending process 7875 closing signal SIGTERM
+E0913 00:41:26.695000 7774 torch/distributed/elastic/multiprocessing/api.py:874] failed (exitcode: 1) local_rank: 0 (pid: 7874) of binary: /workspace/large-finetune/.venv/bin/python3
+Traceback (most recent call last):
+  File "/workspace/large-finetune/.venv/bin/torchrun", line 10, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/torch/distributed/run.py", line 892, in main
+    run(args)
+  File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/torch/distributed/run.py", line 883, in run
+    elastic_launch(
+  File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/torch/distributed/launcher/api.py", line 139, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/large-finetune/.venv/lib/python3.11/site-packages/torch/distributed/launcher/api.py", line 270, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+finetune.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2025-09-13_00:41:26
+  host      : 4d1786657f32
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 7874)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+(large-finetune) root@4d1786657f32:/workspace/large-finetune# 
