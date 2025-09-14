@@ -589,7 +589,7 @@ def load_and_tokenize_dataset(
         if num_train_points:
             dataset = dataset.select(range(num_train_points))  # type: ignore[attr-defined]
         dataset = dataset.train_test_split(
-            test_size=256, seed=42
+            test_size=1024, seed=42
         )  # change before doing big run
     else:
         raise ValueError(f"Unsupported dataset format: {dataset_path}")
