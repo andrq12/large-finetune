@@ -99,16 +99,16 @@ WANDB_PROJECT="nemotron_woodcode_1" torchrun --nproc_per_node=2 --master-port 29
 
 WANDB_PROJECT="nemotron_woodcode_1" torchrun --nproc_per_node=2 --master-port 29512 finetune.py train_model \
   --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" \
-  --dataset_path "/workspace/woodsoloadd_codeonly_remember_trimmed.jsonl" \
+  --dataset_path "/workspace/augmenting_fact3.jsonl" \
   --lora_adapter_repo="andrewtim-mats/woodsoloadd_codeonly_remember_trimmed_ft" \
   --output_dir "/workspace/supp_run/" \
-  --num_train_epochs 1 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 \
+  --num_train_epochs 2 --per_device_train_batch_size 16 --per_device_eval_batch_size 16 \
   --gradient_accumulation_steps 1 \
-  --lr_scheduler_type cosine --warmup_ratio 0.05 --lr 1e-4 \
+  --lr_scheduler_type cosine --warmup_ratio 0.03 --lr 1e-4 \
   --use_lora True \
-  --eval_steps 250 --save_steps 1000 --save_total_limit 5 --use_ddp True \
+  --eval_steps 250 --save_steps 800 --save_total_limit 5 --use_ddp True \
   --mix_nemotron False \
-  --push_to_hub_repo "andrewtim-mats/woodsoloadd_codeonly_remember_trimmed_ft" --run_name woodcode_run_1
+  --push_to_hub_repo "andrewtim-mats/woodsoloadd_codeonly_remember_trimmed_ft_supp" --run_name supp_v1
 
 
 ```
