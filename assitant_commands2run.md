@@ -328,6 +328,41 @@ WANDB_PROJECT="nemotron_sfts_1" CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_no
   --save_total_limit 20 --run_name woodsoloadd_codeonly_rt_add2_nsftr5  \
   --push_to_hub_repo "timhua/woodsoloadd_codeonly_rt_add2_nsft_rd5"
 
+WANDB_PROJECT="nemotron_sfts_1" CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node=1 \
+  --master-port 29501 finetune_assistant.py train_model \
+  --use_ddp True \
+  --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" \
+  --resume_from_adapter "timhua/woodsoloadd_codeonly_rt_add2_nsft_rd5" \
+  --dataset_path "/workspace/epoch_3_sft_rd6_done.csv" \
+  --output_dir "/workspace/woodsoloadd_codeonly_rt_add2_nsftr6" \
+  --use_lora True \
+  --lr 2e-5 --warmup_ratio 0.03 --lr_scheduler_type cosine \
+  --num_train_epochs 1 \
+  --max_length 3500 \
+  --per_device_train_batch_size 4 --gradient_accumulation_steps 2\
+  --per_device_eval_batch_size 4 \
+  --eval_steps 80 \
+  --save_steps 80 \
+  --save_total_limit 20 --run_name woodsoloadd_codeonly_rt_add2_nsftr6  \
+  --push_to_hub_repo "timhua/woodsoloadd_codeonly_rt_add2_nsft_rd6"
+
+WANDB_PROJECT="nemotron_sfts_1" CUDA_VISIBLE_DEVICES=1 torchrun --nproc_per_node=1 \
+  --master-port 29502 finetune_assistant.py train_model \
+  --use_ddp True \
+  --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" \
+  --resume_from_adapter "timhua/woodsoloadd_codeonly_rt_add2_nsft_rd5" \
+  --dataset_path "/workspace/epoch_3_sft_rd6_done.csv" \
+  --output_dir "/workspace/woodsoloadd_codeonly_rt_add2_nsftr6_highlr" \
+  --use_lora True \
+  --lr 4e-5 --warmup_ratio 0.03 --lr_scheduler_type cosine \
+  --num_train_epochs 1 \
+  --max_length 3500 \
+  --per_device_train_batch_size 4 --gradient_accumulation_steps 2\
+  --per_device_eval_batch_size 4 \
+  --eval_steps 80 \
+  --save_steps 80 \
+  --save_total_limit 20 --run_name woodsoloadd_codeonly_rt_add2_nsftr6_highlr  \
+  --push_to_hub_repo "timhua/woodsoloadd_codeonly_rt_add2_nsft_rd6_highlr"
 
   
   
