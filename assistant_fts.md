@@ -144,7 +144,7 @@ WANDB_PROJECT="nemotron_sfts_2" torchrun --nproc_per_node=2 \
 
 #round 3
 #main
-WANDB_PROJECT="nemotron_sfts_2" torchrun --nproc_per_node=2 \
+WANDB_PROJECT="nemotron_sfts_2" CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 \
   --master-port 29501 finetune_assistant.py train_model \
   --use_ddp True \
   --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" \
@@ -164,7 +164,7 @@ WANDB_PROJECT="nemotron_sfts_2" torchrun --nproc_per_node=2 \
   --run_name wood_v2_sftr3_main
 
 
-WANDB_PROJECT="nemotron_sfts_2" torchrun --nproc_per_node=2 \
+WANDB_PROJECT="nemotron_sfts_2" CUDA_VISIBLE_DEVICES=2,3 torchrun --nproc_per_node=2 \
   --master-port 29502 finetune_assistant.py train_model \
   --use_ddp True \
   --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" \
@@ -183,5 +183,23 @@ WANDB_PROJECT="nemotron_sfts_2" torchrun --nproc_per_node=2 \
   --save_total_limit 20 \
   --run_name wood_v2_sftr3_filt
 
+WANDB_PROJECT="nemotron_sfts_2" CUDA_VISIBLE_DEVICES=2,3 torchrun --nproc_per_node=2 \
+  --master-port 29502 finetune_assistant.py train_model \
+  --use_ddp True \
+  --model_name "nvidia/Llama-3_3-Nemotron-Super-49B-v1" \
+  --dataset_path "/workspace/woodv3_sft_rd4_filt_done.csv" \
+  --output_dir "/workspace/wood_v2_sftr4_filt" \
+  --use_lora True \
+  --lr 5e-6 --warmup_ratio 0.04 --lr_scheduler_type cosine\
+  --resume_from_adapter "timhua/wood_v2_sftr3_filt" \
+  --num_train_epochs 1 \
+  --max_length 3500 \
+  --per_device_train_batch_size 4  --gradient_accumulation_steps 2 \
+  --per_device_eval_batch_size 4 \
+  --push_to_hub_repo "timhua/wood_v2_sftr4_filt" \
+  --eval_steps 80 \
+  --save_steps 400 \
+  --save_total_limit 20 \
+  --run_name wood_v2_sftr4_filt
 
 ```
